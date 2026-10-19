@@ -56,7 +56,6 @@ The netlists use simplified BSIM3v3-style device models for demonstration. They 
 - [Cu/CNT RLC calculations](archive/CNT_Cu_RLC_Calculations_corrected.xlsx)
 - [Cu/CNT formula reference](archive/CNT_Cu_RLC_Formula_Reference_corrected.docx)
 - [Interconnect reference paper](archive/downloads%2011%20Aug%2026/interconnect.pdf)
-- [Performance comparison paper]("archive/downloads 11 Aug 26/Performance_comparison_between_carbon_nanotube_and_copper_interconnects_for_gigascale_integration_GSI.pdf")
 
 The active netlist values are derived from the calculation workbook. For the 45 nm, 100 micrometre case, the documented values are:
 
