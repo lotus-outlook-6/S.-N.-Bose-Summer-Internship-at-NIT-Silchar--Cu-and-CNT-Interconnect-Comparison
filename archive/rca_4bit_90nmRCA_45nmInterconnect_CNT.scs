@@ -1,0 +1,245 @@
+// ==================================================================
+// 4-bit Ripple Carry Adder (RCA)
+//   -- Logic/devices : 90nm standard cells (unchanged from original)
+//   -- Interconnect  : 45nm-node SWCNT (carbon nanotube) bundle
+//                       Pi-segment on carry chain
+// Format : Cadence Spectre (native Virtuoso/ADE netlist format)
+// Usage  : spectre rca_4bit_90nmRCA_45nmInterconnect_CNT.scs
+//
+// Structure:
+//   4 full adders (FA0..FA3) built hierarchically from static CMOS
+//   gates (inv, nand2, nor2, and2, or2, xor2), all on 90nm devices
+//   -- the transistor models/widths are untouched from the original
+//   90nm netlist. Identical logic netlist to the Cu companion file.
+//
+//   SWCNT bundle interconnect is inserted on the INTERNAL CARRY
+//   CHAIN (FA0.cout -> FA1.cin -> FA2.cin -> FA3.cin), replacing
+//   the copper Pi-segment of the companion file with a carbon-
+//   nanotube-bundle R/L/C model at the same 45nm node and same
+//   100um segment length -- useful for a like-for-like Cu-vs-CNT
+//   comparison of carry-chain delay under identical logic/device
+//   assumptions.
+//
+// SOURCE OF THE INTERCONNECT NUMBERS:
+//   CNT_Cu_RLC_Calculations_corrected.xlsx, sheet "CNT", 45nm column,
+//   "Length = 100 um" block (matches this netlist's 100um segment
+//   length assumption, and the Cu companion file's length):
+//     Total Bundle Resistance   R = 43991.0649722055   Ohm
+//     Total Inductance          L = 2.72745895738459   nH
+//     Total Capacitance         C = 17.360503304935    fF
+//   Derived from Assumptions-sheet 45nm geometry (W=45nm, AR=1.7 ->
+//   H=76.5nm, S=45nm, CNT diameter d=1.6nm, van der Waals spacing
+//   delta=0.34nm, metallic fraction Fm=1/3) through: bundle packing
+//   (N_total, N_m metallic tubes), quantum/contact resistance R_Q
+//   plus phonon-scattering term R_Q*(L/lambda_eff) plus lumped
+//   metal-CNT contact resistance R_contact=10kOhm (all divided by
+//   N_m metallic tubes), kinetic + magnetic inductance per unit
+//   length, and series quantum + electrostatic capacitance per unit
+//   length -- all scaled by the 100um segment length. Applied
+//   uniformly to each of the 3 carry-chain segments.
+// ==================================================================
+simulator lang=spectre
+
+// ------------------------------------------------------------------
+// Global parameters
+// ------------------------------------------------------------------
+parameters vdd_val=1.2
+
+// ------------------------------------------------------------------
+// SWCNT BUNDLE INTERCONNECT PARAMETERS -- 45nm-node values, from
+// CNT_Cu_RLC_Calculations sheet "CNT", 45nm column, 100um length
+// block. Applied uniformly to each of the 3 internal carry-chain
+// segments. The RCA logic below stays on 90nm devices -- only the
+// wire model is swapped from the Cu companion file to a CNT bundle,
+// same node, same length.
+// ------------------------------------------------------------------
+parameters r_int=43991.0649722055  // wire resistance per carry segment  [ohm]  (sheet: CNT 45nm, 100um)
+parameters c_int=17.360503304935f  // wire capacitance per carry segment [F]    (sheet: CNT 45nm, 100um)
+parameters l_int=2.72745895738459n // wire inductance per carry segment  [H]    (sheet: CNT 45nm, 100um)
+
+// Underlying 45nm bundle geometry/assumptions these R/L/C values
+// correspond to (Assumptions sheet, Sections B & D, 45nm column),
+// kept here for reference / re-derivation if you change the segment
+// length:
+parameters wire_len=100u        // matches sheet's "Length = 100 um" block
+parameters wire_width=45n       // W (bundle cross-section envelope)
+parameters wire_aspect=1.7      // H/W
+parameters wire_height=76.5n    // H = W*AR
+parameters wire_spacing=45n     // S (S = W assumed)
+parameters cnt_diameter=1.6n    // individual SWCNT diameter d
+parameters cnt_vdw_spacing=0.34n // inter-tube van der Waals spacing delta
+parameters cnt_metallic_frac=0.333333 // metallic-CNT fraction Fm (unsorted synthesis)
+parameters cnt_n_total=897      // N_total metallic+semiconducting tubes packed in W x H envelope
+parameters cnt_n_metallic=299   // N_m = round(N_total * Fm), current-carrying metallic tubes
+parameters cnt_r_contact=10000  // metal-CNT contact resistance R_contact [ohm], typical/mid-range
+parameters eps_r_ild=3          // ILD dielectric constant
+// r_int/c_int/l_int above are the sheet's fully-derived (quantum +
+// phonon-scattering + contact resistance; kinetic + magnetic
+// inductance; series quantum/electrostatic capacitance) totals for
+// the whole N_m-tube bundle over the given length -- use those
+// directly rather than re-deriving from the per-tube/per-unit-length
+// figures, since the bundle totals already include the 1/N_m
+// current-sharing and length-scaling steps.
+
+// ------------------------------------------------------------------
+// 90nm generic MOS models (simplified/illustrative -- replace with
+// an `include "foundry_models.scs" section=tt` for real silicon)
+// ------------------------------------------------------------------
+model nmos90 bsim3v3 type=n vth0=0.25 tox=2.2e-9 u0=300 lambda=0.10
+model pmos90 bsim3v3 type=p vth0=-0.25 tox=2.2e-9 u0=100 lambda=0.10
+
+// ==================================================================
+// Standard-cell subcircuit library (static CMOS, 90nm)
+// ==================================================================
+
+// ---- Inverter -----------------------------------------------------
+subckt inv90 in out vdd gnd \
+        wn=120n wp=240n ln=90n
+    MP0 (out in vdd vdd) pmos90 w=wp l=ln
+    MN0 (out in gnd gnd) nmos90 w=wn l=ln
+ends inv90
+
+// ---- 2-input NAND ---------------------------------------------------
+subckt nand2 a b out vdd gnd \
+        wn=120n wp=240n ln=90n
+    MP0 (out a vdd vdd) pmos90 w=wp l=ln
+    MP1 (out b vdd vdd) pmos90 w=wp l=ln
+    MN0 (out a n1 gnd)  nmos90 w=wn l=ln
+    MN1 (n1  b gnd gnd) nmos90 w=wn l=ln
+ends nand2
+
+// ---- 2-input NOR ----------------------------------------------------
+subckt nor2 a b out vdd gnd \
+        wn=120n wp=240n ln=90n
+    MP0 (out a n1  vdd) pmos90 w=wp l=ln
+    MP1 (n1  b vdd vdd) pmos90 w=wp l=ln
+    MN0 (out a gnd gnd) nmos90 w=wn l=ln
+    MN1 (out b gnd gnd) nmos90 w=wn l=ln
+ends nor2
+
+// ---- 2-input AND (NAND2 + INV) --------------------------------------
+subckt and2 a b out vdd gnd
+    Xn (a b n_nand vdd gnd) nand2
+    Xi (n_nand out vdd gnd) inv90
+ends and2
+
+// ---- 2-input OR (NOR2 + INV) -----------------------------------------
+subckt or2 a b out vdd gnd
+    Xn (a b n_nor vdd gnd) nor2
+    Xi (n_nor out vdd gnd) inv90
+ends or2
+
+// ---- 2-input XOR (4-NAND structure, pure static CMOS) -----------------
+subckt xor2 a b out vdd gnd
+    X1 (a  b  n1 vdd gnd) nand2
+    X2 (a  n1 n2 vdd gnd) nand2
+    X3 (b  n1 n3 vdd gnd) nand2
+    X4 (n2 n3 out vdd gnd) nand2
+ends xor2
+
+// ---- Full Adder: sum = A xor B xor Cin ; cout = AB + Cin(A xor B) -----
+subckt full_adder a b cin sum cout vdd gnd
+    Xxor1 (a b p vdd gnd)      xor2   // p = A xor B
+    Xxor2 (p cin sum vdd gnd) xor2   // sum = P xor Cin
+    Xand1 (a b t1 vdd gnd)    and2   // t1 = A.B
+    Xand2 (p cin t2 vdd gnd)  and2   // t2 = P.Cin
+    Xor1  (t1 t2 cout vdd gnd) or2   // cout = t1 + t2
+ends full_adder
+
+// ---- SWCNT bundle interconnect: Pi RC(L) segment, node a -> node b ----
+// Same lumped-Pi topology as the Cu companion file's cu_interconnect,
+// just re-parameterized with the CNT bundle's R/L/C totals so the
+// two files are directly comparable.
+subckt cnt_interconnect a b gnd \
+        r=50 c=5f l=1p
+    Ca   (a n_l gnd)  capacitor c=c/2
+    Lint (a n_l)      inductor  l=l
+    Rint (n_l b)      resistor  r=r
+    Cb   (b gnd)      capacitor c=c/2
+ends cnt_interconnect
+
+// ==================================================================
+// Top level: 4-bit Ripple Carry Adder
+//   Sum[3:0] = A[3:0] + B[3:0] + Cin
+// ==================================================================
+
+Vdd (vdd 0) vsource dc=vdd_val type=dc
+
+// ------------------------------------------------------------------
+// Stimulus: A[3:0] steps through all 16 values as a binary counter
+// (bit period doubles each bit -> natural binary count 0..15 over 16n).
+// B[3:0] held at a fixed test vector (0101 = 5). Cin held low.
+// Edit these to test whatever vectors you need. (Identical stimulus
+// to the Cu companion file, for a like-for-like comparison.)
+// ------------------------------------------------------------------
+Va0 (a0 0) vsource type=pulse val0=0 val1=vdd_val delay=0   rise=50p fall=50p width=1n  period=2n
+Va1 (a1 0) vsource type=pulse val0=0 val1=vdd_val delay=0   rise=50p fall=50p width=2n  period=4n
+Va2 (a2 0) vsource type=pulse val0=0 val1=vdd_val delay=0   rise=50p fall=50p width=4n  period=8n
+Va3 (a3 0) vsource type=pulse val0=0 val1=vdd_val delay=0   rise=50p fall=50p width=8n  period=16n
+
+Vb0 (b0 0) vsource dc=vdd_val type=dc   // B = 0101 = 5
+Vb1 (b1 0) vsource dc=0       type=dc
+Vb2 (b2 0) vsource dc=vdd_val type=dc
+Vb3 (b3 0) vsource dc=0       type=dc
+
+Vcin (cin0 0) vsource dc=0 type=dc      // external Cin, fixed low
+
+// ------------------------------------------------------------------
+// Bit 0 (LSB) -- external cin feeds directly, no interconnect needed
+// ------------------------------------------------------------------
+Xfa0 (a0 b0 cin0 s0 n_c1_raw vdd 0) full_adder
+
+// CNT bundle interconnect: FA0 carry-out -> FA1 carry-in
+Xint01 (n_c1_raw c1 0) cnt_interconnect r=r_int c=c_int l=l_int
+
+// ------------------------------------------------------------------
+// Bit 1
+// ------------------------------------------------------------------
+Xfa1 (a1 b1 c1 s1 n_c2_raw vdd 0) full_adder
+
+// CNT bundle interconnect: FA1 carry-out -> FA2 carry-in
+Xint12 (n_c2_raw c2 0) cnt_interconnect r=r_int c=c_int l=l_int
+
+// ------------------------------------------------------------------
+// Bit 2
+// ------------------------------------------------------------------
+Xfa2 (a2 b2 c2 s2 n_c3_raw vdd 0) full_adder
+
+// CNT bundle interconnect: FA2 carry-out -> FA3 carry-in
+Xint23 (n_c3_raw c3 0) cnt_interconnect r=r_int c=c_int l=l_int
+
+// ------------------------------------------------------------------
+// Bit 3 (MSB) -- final carry-out drives the primary output pin
+// ------------------------------------------------------------------
+Xfa3 (a3 b3 c3 s3 cout vdd 0) full_adder
+
+// Small fixed fanout load on each primary output (sum bits + final carry)
+CL0 (s0 0)   capacitor c=2f
+CL1 (s1 0)   capacitor c=2f
+CL2 (s2 0)   capacitor c=2f
+CL3 (s3 0)   capacitor c=2f
+CLc (cout 0) capacitor c=2f
+
+// ------------------------------------------------------------------
+// Analysis
+// ------------------------------------------------------------------
+tran1 tran stop=18n
+
+// Save all inputs/outputs and the internal (pre-interconnect) carry
+// nodes so you can directly compare carry waveform before vs. after
+// the CNT bundle wire, to see the RC(L) delay/degradation it
+// introduces (and compare against the Cu companion file's results).
+save a0 a1 a2 a3 b0 b1 b2 b3 cin0 \
+     s0 s1 s2 s3 cout \
+     n_c1_raw c1 n_c2_raw c2 n_c3_raw c3 vdd
+
+// Carry-chain delay measurement: raw FA0 carry-out vs. after the CNT
+// bundle wire, isolates the RC(L) delay contributed by the
+// interconnect itself.
+tpd_int1 delay trig=v(n_c1_raw) val=vdd_val/2 rise=1 targ=v(c1) val=vdd_val/2 rise=1
+
+// ------------------------------------------------------------------
+// Simulator options (Spectre-native): reasonable defaults for this
+// digital-switching testbench with sub-ns edges.
+// ------------------------------------------------------------------
+options reltol=1e-4 vabstol=1e-6 iabstol=1e-12 temp=27

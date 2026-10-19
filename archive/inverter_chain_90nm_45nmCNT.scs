@@ -1,0 +1,123 @@
+// ==================================================================
+// Two-Stage 90nm CMOS Inverter Chain with 45nm-node SWCNT Bundle Interconnect
+// Format: Cadence Spectre (native Virtuoso/ADE netlist format)
+// Usage : spectre inverter_chain_90nm_45nmCNT.scs
+//         or include this file from an ADE-L "Include File" setup,
+//         or paste the subckts into a Virtuoso schematic's netlist.
+//
+// Companion file to inverter_chain_90nm_45nmCu.scs -- same 90nm
+// inverters, same topology, only the interconnect subckt/values differ
+// so the two can be run side by side for a direct Cu vs CNT comparison.
+//
+// NOTE ON TIMING: the CNT bundle's own R*C is ~765ps at 100um (vs
+// ~2.9ps for Cu at the same length -- see rationale below), so the
+// pulse period/width and .tran stop time were stretched out relative
+// to the Cu file to give the output enough time to actually settle.
+// Rise/fall (50p) are left unchanged so both files drive the wire with
+// the same edge rate -- only the wire's own response time differs.
+// ==================================================================
+simulator lang=spectre
+
+// ------------------------------------------------------------------
+// Global parameters
+// ------------------------------------------------------------------
+parameters vdd_val=1.2
+
+// ------------------------------------------------------------------
+// SWCNT BUNDLE INTERCONNECT PARAMETERS -- 45nm node
+// Source: CNT_Cu_RLC_Calculations_corrected.xlsx, Summary sheet,
+// Node=45nm / Material=CNT. At this node the bundle packs N_total=897
+// tubes in the W x H envelope, of which N_m=299 are metallic (Fm=1/3,
+// unsorted synthesis assumption) and actually carry current; R below
+// already includes per-tube quantum resistance (R_Q=6453 Ohm),
+// scattering resistance over lambda_eff=49.1nm, AND the metal-CNT
+// contact resistance (10 kOhm/tube) -- all divided down by N_m. Do
+// not add a separate contact resistance element, it's already in R.
+// ------------------------------------------------------------------
+// Active length below = 100um. To change length, comment out the
+// active block and uncomment one of the two alternates -- and see the
+// timing note further down, R*C grows with l^2 so longer lengths need
+// a proportionally longer .tran stop time to actually settle.
+
+// -- 100um (ACTIVE) --
+parameters r_int=43991.06   // total bundle resistance [ohm]  @ l=100um
+parameters c_int=17.3605f   // total bundle capacitance [F]   @ l=100um
+parameters l_int=2.7275n    // total bundle inductance  [H]   @ l=100um
+
+// -- 500um alternate (comment the 100um block above, uncomment this;
+//    R*C is ~25x the 100um case -- stretch period/width/stop ~25x too) --
+// parameters r_int=219735.22   // [ohm]  @ l=500um
+// parameters c_int=86.8025f    // [F]    @ l=500um
+// parameters l_int=13.6373n    // [H]    @ l=500um
+
+// -- 1000um alternate (R*C is ~100x the 100um case -- stretch
+//    period/width/stop ~100x too, or the signal never gets there) --
+// parameters r_int=439415.40   // [ohm]  @ l=1000um
+// parameters c_int=173.605f    // [F]    @ l=1000um
+// parameters l_int=27.2746n    // [H]    @ l=1000um
+
+// ------------------------------------------------------------------
+// 90nm generic MOS models (simplified, illustrative -- swap in your
+// foundry's model library via an `include` statement for real silicon)
+// ------------------------------------------------------------------
+model nmos90 bsim3v3 type=n vth0=0.25 tox=2.2e-9 u0=300 lambda=0.10
+model pmos90 bsim3v3 type=p vth0=-0.25 tox=2.2e-9 u0=100 lambda=0.10
+
+// ------------------------------------------------------------------
+// Inverter subcircuit (parameterized W/L so you can resize freely)
+// ------------------------------------------------------------------
+subckt inv90 in out vdd gnd \
+        wn=120n wp=240n ln=90n
+    MP0 (out in vdd vdd) pmos90 w=wp l=ln
+    MN0 (out in gnd gnd) nmos90 w=wn l=ln
+ends inv90
+
+// ------------------------------------------------------------------
+// SWCNT bundle interconnect subcircuit: Pi RC(L) segment, node a -> b.
+// Same lumped-pi topology as cu_interconnect -- the sheet already
+// reduces the whole 299-tube bundle to one equivalent series R, L and
+// total C, so no per-tube or mutual-inductance modeling is needed here.
+// ------------------------------------------------------------------
+subckt cnt_interconnect a b gnd \
+        r=43991.06 c=17.3605f l=2.7275n
+    Ca   (a n_l gnd)  capacitor c=c/2
+    Lint (a n_l)      inductor  l=l
+    Rint (n_l b)      resistor  r=r
+    Cb   (b gnd)      capacitor c=c/2
+ends cnt_interconnect
+
+// ==================================================================
+// Top-level circuit: in -> INV1 -> mid --(45nm CNT bundle)--> in2 -> INV2 -> out
+// ==================================================================
+
+// Supplies / stimulus
+Vdd  (vdd 0)  vsource dc=vdd_val type=dc
+Vin  (in 0)   vsource type=pulse val0=0 val1=vdd_val delay=1n \
+              rise=50p fall=50p width=4n period=8n
+
+// Stage 1
+Xinv1 (in mid vdd 0) inv90
+
+// Interconnect between the two inverters -- 45nm-node SWCNT bundle, l=100um
+// (see the alternates block above to switch to the 500um/1000um values)
+Xint  (mid in2 0) cnt_interconnect r=r_int c=c_int l=l_int
+
+// Stage 2
+Xinv2 (in2 out vdd 0) inv90
+
+// Small fixed fanout load at the final output
+CL (out 0) capacitor c=2f
+
+// ------------------------------------------------------------------
+// Analysis
+// ------------------------------------------------------------------
+tran1 tran stop=16n
+
+// Save nodes of interest for the ADE waveform window / .raw output
+save in mid in2 out vdd
+
+// Optional delay measurements (uncomment in ADE "Outputs" or here) --
+// worth turning these on here specifically, since tpdHL/tpdLH is the
+// natural number to diff against the Cu file's result
+// tpdHL delay trig=v(in) val=vdd_val/2 rise=1 targ=v(out) val=vdd_val/2 fall=1
+// tpdLH delay trig=v(in) val=vdd_val/2 fall=1 targ=v(out) val=vdd_val/2 rise=1
